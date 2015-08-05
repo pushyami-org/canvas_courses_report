@@ -3,23 +3,11 @@ package edu.umich.ctools.analytics;
 import java.util.ArrayList;
 
 public class CoursesForSubaccounts {
-	public ArrayList<Term> terms=new ArrayList<Term>();
 	
 	public ArrayList<Course> course=new ArrayList<Course>();
 	
 	public ArrayList<SubAccount> subAccount=new ArrayList<SubAccount>();
 
-	public ArrayList<Term> getTerms() {
-		return terms;
-	}
-
-	public void setTerms(ArrayList<Term> terms) {
-		this.terms = terms;
-	}
-	
-	public void addTerm(Term term){
-		this.terms.add(term);
-	}
 
 	public ArrayList<Course> getCourse() {
 		return course;
