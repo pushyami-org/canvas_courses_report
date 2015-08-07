@@ -1,8 +1,11 @@
+'use strict';
+/* jshint strict: true/
+/ global $*/
 $(document).ready(function(){
-	var term='term';
-	getTermsInfo();
+var term='term';
+getTermsInfo();
     
-    function getTermsInfo(){
+function getTermsInfo(){
     	var url="analytics?action=getEnrollmentTerms";
     	var termRequest = $.ajax({
 			url: url,
@@ -11,14 +14,15 @@ $(document).ready(function(){
 		});
     	termRequest.done(function(data) {
     		var terms=data.enrollment_terms;
-    		var newSelect=document.createElement('select');
-    		newSelect.setAttribute('id', 'termsSelect');
+    		var newSelect=document.getElementById('termsSelect');
+    		var label=document.createElement('label');
+    		label.setAttribute('for', 'termsSelect');
     		 var selectHTML="";
     		$.each(terms, function(index, term) {
     			selectHTML+= '<option id="term'+term.id+'" value="'+term.id+'">'+term.name+'</option>';
     	    });	
     		newSelect.innerHTML= selectHTML;
-    	    document.getElementById('enrollment_terms').appendChild(newSelect);
+    		newSelect.appendChild(label);
     	    $('#termsSelect').on('change',function() {
     	    	var courseReportRequest = $.ajax({
     				url: 'analytics?action=getCoursesPublished&term='+$(this).val()+'&termName='+$('#termsSelect option:selected').text(),
@@ -30,7 +34,7 @@ $(document).ready(function(){
     	            if (disposition && disposition.indexOf('attachment') !== -1) {
     	                var filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
     	                var matches = filenameRegex.exec(disposition);
-    	                if (matches != null && matches[1]) filename = matches[1].replace(/['"]/g, '');
+    	                if (matches !== null && matches[1]) filename = matches[1].replace(/['"]/g, '');
     	            }
 
     	            var type = xhr.getResponseHeader('Content-Type');
@@ -63,15 +67,15 @@ $(document).ready(function(){
     	            }
     	    	});
     	    	
-    	    	courseReportRequest.fail(function( jqXHR, textStatus ) {
-    	    		  alert( "Terms request failed: " + textStatus );
+    	    	courseReportRequest.fail(function( xhr, textStatus ) {
+    	    		  alert(xhr.responseText);
     	    	});
     	    	
     	    });
     	    
 		});
-    	termRequest.fail(function( jqXHR, textStatus ) {
-    		  alert( "Terms request failed: " + textStatus );
+    	termRequest.fail(function(xhr, textStatus) {
+    		  alert(xhr.responseText);
     	});
     	
     }

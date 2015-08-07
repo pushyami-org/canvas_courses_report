@@ -1,4 +1,4 @@
-package edu.umich.ctools.analytics;
+package edu.umich.tl.analytics;
 
 public class SubAccount {
 	private int subAccountId;
