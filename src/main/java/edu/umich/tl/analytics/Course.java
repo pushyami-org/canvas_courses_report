@@ -1,6 +1,8 @@
-package edu.umich.ctools.analytics;
+package edu.umich.tl.analytics;
 
 import java.util.HashMap;
+
+import org.apache.commons.lang3.StringUtils;
 
 public class Course {
 	private int accountId;
@@ -66,6 +68,31 @@ public class Course {
 	}
 	public void setInstructors(HashMap<String, String> instructors) {
 		this.instructors = instructors;
+	}
+	
+	public static String getCourseHeader() {
+		StringBuilder courseHeader=new StringBuilder();
+		courseHeader.append("COURSE_NAME");courseHeader.append(',');
+		courseHeader.append("COURSE_ID");courseHeader.append(',');
+		courseHeader.append("COURSE_URL");courseHeader.append(',');
+		courseHeader.append("INSTRUCTOR_NAME");courseHeader.append(',');
+		courseHeader.append("INSTRUCTOR_EMAIL");courseHeader.append(',');
+		courseHeader.append("ACCOUNT_NAME");courseHeader.append(',');
+		courseHeader.append("PARENT_ACCOUNT_NAME");courseHeader.append('\n');
+		return courseHeader.toString();
+	}
+	public String getCourseValues() {
+		StringBuilder courseValues=new StringBuilder();
+		courseValues.append("\"" +getCourseName()+ "\"");courseValues.append(',');
+		courseValues.append(Integer.toString(getCourseId()));courseValues.append(',');
+		courseValues.append(getCourseUrl());courseValues.append(',');
+		courseValues.append(StringUtils.join(getInstructors().values(),';'));courseValues.append(',');
+		courseValues.append(StringUtils.join(getInstructors().keySet(),';'));courseValues.append(',');
+		courseValues.append("\"" +getAccountName()+"\"" );courseValues.append(',');
+		courseValues.append("\"" +getParentAccountName()+"\"" );courseValues.append(',');
+		courseValues.append('\n');
+		return courseValues.toString();
+		
 	}
 	
 

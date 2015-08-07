@@ -1,4 +1,4 @@
-package edu.umich.ctools.analytics;
+package edu.umich.tl.analytics;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -9,12 +9,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Properties;
+import java.util.ResourceBundle;
 
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.commons.lang3.*;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.http.Header;
@@ -32,7 +32,8 @@ import org.apache.http.util.EntityUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import edu.umich.ctools.utils.ReportUtilities;
+import edu.umich.tl.utils.ReportUtilities;
+
 
 
 public class AnalyticsServlet extends HttpServlet {
@@ -42,14 +43,18 @@ public class AnalyticsServlet extends HttpServlet {
 	private static Log M_log = LogFactory.getLog(AnalyticsServlet.class);
 	private static final String PROPERTY_CANVAS_ADMIN="canvas.admin.token";
 	private static final String PROPERTY_CANVAS_URL="canvas.url";
-	public static final String ACTION = "action";
-	public static final String TERM = "term";
-	public static final String ACTION_GET_COURSES = "getCoursesPublished";
-	public static final String ACTION_GET_TERMS = "getEnrollmentTerms";
+	private static final String ACTION = "action";
+	private static final String TERM = "term";
+	private static final String TERM_NAME = "termName";
+	private static final String ACTION_GET_COURSES = "getCoursesPublished";
+	private static final String ACTION_GET_TERMS = "getEnrollmentTerms";
+	private static final String NONE = "NONE";
 	private static final String SYSTEM_PROPERTY_FILE_PATH = "canvasCourseReportPath";
+	private static final String EMAIL_SUFFIX="@umich.edu";
 	private Properties appExtPropertiesFile;
 	private String canvasToken;
 	private String canvasURL;
+	ResourceBundle props = ResourceBundle.getBundle("coursereport");
 	
 	public void init() {
 		M_log.debug("init(): called");
@@ -77,23 +82,34 @@ public class AnalyticsServlet extends HttpServlet {
 
 	protected void doGet(HttpServletRequest request,HttpServletResponse response){
 		M_log.debug("doGet: Called");
-		if(request.getParameter(ACTION).equals(ACTION_GET_COURSES)) {
+		String requestedAction = request.getParameter(ACTION);
+		M_log.debug("Action : "+requestedAction);
+		if(requestedAction.equals(ACTION_GET_COURSES)) {
 			getPublishedCourses(request,response);
-		}else if(request.getParameter(ACTION).equals(ACTION_GET_TERMS)) {
+		}else if(requestedAction.equals(ACTION_GET_TERMS)) {
 			enrollmentTermsLogic(response);
+		}else {
+			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			try {
+				response.getWriter().print(props.getString("get.error"));
+			} catch (IOException e) {
+				M_log.error("Request action unknown: \"" + requestedAction
+						+ "\"",e);
+			}
 		}
 		
 	}
 	private void getPublishedCourses(HttpServletRequest request,HttpServletResponse response) {
 		M_log.debug("getPublishedCourses: Called");
 		String term = request.getParameter(TERM);
+	    String termName = request.getParameter(TERM_NAME);
 		String subAccountUrl = canvasURL+"/api/v1/accounts/1/sub_accounts?recursive=true&per_page=100";
 		String url = canvasURL+"/api/v1/accounts/1/courses?enrollment_term_id="+term+"&published=true&per_page=100";
 		CoursesForSubaccounts cfs =new CoursesForSubaccounts();
 		getSubAccountInfo(subAccountUrl,cfs);
 		getThePublishedCourseList(url,cfs);
 		response.setContentType("text/csv");
-		response.setHeader("Content-Disposition","attachment;filename=publishedCourseByTerm.csv");
+		response.setHeader("Content-Disposition","attachment;filename=PublishedCanvasCoursesWithInstructorsFor"+termName+".csv");
 		try {
 			OutputStream outputStream = response.getOutputStream();
 			String outputResult = generateCSVFile(cfs).toString();
@@ -104,33 +120,14 @@ public class AnalyticsServlet extends HttpServlet {
 			M_log.error("Writing the csv file to the has some errror: ",e);
 		}
 	}
-	protected void doPost(HttpServletRequest request,HttpServletResponse response) {
-		M_log.debug("doGet: Called");
-	}
 
 	private StringBuilder generateCSVFile(CoursesForSubaccounts cfs) {
 		M_log.debug("generateCSVFile: Called");
 		StringBuilder writer = new StringBuilder();
 		ArrayList<Course> courses = cfs.getCourse();
-		writer.append("COURSE_NAME");writer.append(',');
-		writer.append("COURSE_ID");writer.append(',');
-		writer.append("COURSE_URL");writer.append(',');
-		writer.append("INSTRUCTOR_NAME");writer.append(',');
-		writer.append("INSTRUCTOR_EMAIL");writer.append(',');
-		writer.append("ACCOUNT_NAME");writer.append(',');
-		writer.append("PARENT_ACCOUNT_NAME");
-		writer.append('\n');
-		int count=0;
+		writer.append(Course.getCourseHeader());
 		for (Course course : courses) {
-			writer.append("\"" +course.getCourseName()+ "\"");writer.append(',');
-			writer.append(Integer.toString(course.getCourseId()));writer.append(',');
-			writer.append(course.getCourseUrl());writer.append(',');
-			writer.append(StringUtils.join(course.getInstructors().values(),';'));writer.append(',');
-			writer.append(StringUtils.join(course.getInstructors().keySet(),';'));writer.append(',');
-			writer.append("\"" +course.getAccountName()+"\"" );writer.append(',');
-			writer.append("\"" +course.getParentAccountName()+"\"" );writer.append(',');
-			writer.append('\n');
-			count++;
+			writer.append(course.getCourseValues());
 		}
 		return writer;
 		
@@ -179,25 +176,7 @@ public class AnalyticsServlet extends HttpServlet {
 				HashMap<String, String> instructorsForCourses = getInstructorsForCourses(aCourse.getCourseId());
 				aCourse.setInstructors(instructorsForCourses);
 				if(!(aCourse.getAccountId()==1)) {
-					ArrayList<SubAccount> subAccounts = cfs.getSubAccount();
-					for (SubAccount subAccount : subAccounts) {
-						if(subAccount.getSubAccountId()==aCourse.getAccountId()) {
-							aCourse.setAccountName(subAccount.getSubAccountName());
-							aCourse.setParentAccountId(subAccount.getParentAccountId());
-							if(subAccount.isParentRoot()) {
-								aCourse.setParentAccountName(ROOT);
-							}else {
-								for (SubAccount sAcct : subAccounts) {
-									if(sAcct.getSubAccountId()==aCourse.getParentAccountId()) {
-										aCourse.setParentAccountName(sAcct.getSubAccountName());
-										break;
-									}
-								}
-
-							}
-							break;
-						}
-					}
+					getSubaccountInfoForCourse(cfs, aCourse);
 				}else {
 					aCourse.setAccountName(ROOT);
 					aCourse.setParentAccountName(ROOT);
@@ -218,9 +197,34 @@ public class AnalyticsServlet extends HttpServlet {
 		}
 	}
 
+	private void getSubaccountInfoForCourse(CoursesForSubaccounts cfs, Course aCourse) {
+		ArrayList<SubAccount> subAccounts = cfs.getSubAccount();
+		for (SubAccount subAccount : subAccounts) {
+			if(subAccount.getSubAccountId()==aCourse.getAccountId()) {
+				aCourse.setAccountName(subAccount.getSubAccountName());
+				aCourse.setParentAccountId(subAccount.getParentAccountId());
+				getParentSubaccountNameForCourse(aCourse, subAccounts, subAccount);
+				break;
+			}
+		}
+	}
+
+	private void getParentSubaccountNameForCourse(Course aCourse, ArrayList<SubAccount> subAccounts,SubAccount subAccount) {
+		if(subAccount.isParentRoot()) {
+			aCourse.setParentAccountName(ROOT);
+		}else {
+			for (SubAccount sAcct : subAccounts) {
+				if(sAcct.getSubAccountId()==aCourse.getParentAccountId()) {
+					aCourse.setParentAccountName(sAcct.getSubAccountName());
+					break;
+				}
+			}
+
+		}
+	}
+
 	private HashMap<String, String> getInstructorsForCourses(int courseId) {
 		M_log.debug("getInstructorsForCourses: Called");
-		String email="@umich.edu";
 		String EnrollmentUrl= canvasURL+"/api/v1/courses/"+courseId+"/enrollments?per_page=100&type=TeacherEnrollment";
 		HttpResponse httpResponse = doApiCall(EnrollmentUrl);
 		ObjectMapper mapper = new ObjectMapper();
@@ -230,9 +234,13 @@ public class AnalyticsServlet extends HttpServlet {
 		try {
 			String jsonResponseString = EntityUtils.toString(entity);
 			instructorEnrollmentList=mapper.readValue(jsonResponseString,new TypeReference<List<Object>>(){});
+			if(!instructorEnrollmentList.isEmpty()) {
 			for (HashMap<String, Object> enrollments : instructorEnrollmentList) {
 				HashMap<String, Object> user=(HashMap<String, Object>) enrollments.get("user");
-				instructors.put((String)user.get("sis_login_id")+email, (String) user.get("name"));
+				instructors.put((String)user.get("sis_login_id")+EMAIL_SUFFIX, (String) user.get("name"));
+			}
+			}else {
+				instructors.put(NONE, NONE);
 			}
 		} catch (ParseException e) {
 			M_log.error("Parse exception occured getInstructorsForCourses( ) for courseId:"+courseId,e);
@@ -242,7 +250,10 @@ public class AnalyticsServlet extends HttpServlet {
 		return instructors;
 		
 	}
-
+     /*
+      * The Subaccount call fetches the all the subaccounts that belongs to root, the api call only returns 100 records(that's how much canvas supports)
+      * to to fetch more records we need look in the response header for the pagination Link to get more record
+      */
 	private void getSubAccountInfo(String url, CoursesForSubaccounts cfs) {
 		M_log.debug("getSubAccountInfo: Called");
 		HttpResponse httpResponse = doApiCall(url);
@@ -304,7 +315,9 @@ public class AnalyticsServlet extends HttpServlet {
 	protected String getNextPageLink(HttpResponse response) {
 		M_log.debug("getNextPageLink: Called");
 		String result = null;
-		if (response.containsHeader("Link")) {
+		if (!response.containsHeader("Link")) {
+			return result;
+		}
 			Header[] linkHeaders = response.getHeaders("Link");
 			Header linkHeader = linkHeaders[0];
 			M_log.debug("Http response contains the following Link headers: " + linkHeader.getValue());
@@ -322,7 +335,6 @@ public class AnalyticsServlet extends HttpServlet {
 					result = result.substring(1, result.length() - 1);
 				}
 			}
-		}
 		M_log.debug("Returning next page header as: " + (result != null ? result : "NONE"));
 		return result;
 	}
