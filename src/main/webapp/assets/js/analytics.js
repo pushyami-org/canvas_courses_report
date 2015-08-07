@@ -6,13 +6,13 @@ var term='term';
 getTermsInfo();
     
 function getTermsInfo(){
-    	var url="analytics?action=getEnrollmentTerms";
+    	var url="report?action=getEnrollmentTerms";
     	var termRequest = $.ajax({
 			url: url,
 			type: "GET",			
 			dataType: "json"
 		});
-    	termRequest.done(function(data) {
+    	termRequest.done(function(data,status, xhr) {
     		var terms=data.enrollment_terms;
     		var newSelect=document.getElementById('termsSelect');
     		var label=document.createElement('label');
@@ -25,7 +25,7 @@ function getTermsInfo(){
     		newSelect.appendChild(label);
     	    $('#termsSelect').on('change',function() {
     	    	var courseReportRequest = $.ajax({
-    				url: 'analytics?action=getCoursesPublished&term='+$(this).val()+'&termName='+$('#termsSelect option:selected').text(),
+    				url: 'report?action=getCoursesPublished&term='+$(this).val()+'&termName='+$('#termsSelect option:selected').text(),
     				type: "GET",			
     			});
     	    	courseReportRequest.done(function(response, status, xhr){
@@ -75,6 +75,9 @@ function getTermsInfo(){
     	    
 		});
     	termRequest.fail(function(xhr, textStatus) {
+    		if(xhr.status===403){
+    			$('#sessExpire').show();
+    		}
     		  alert(xhr.responseText);
     	});
     	
