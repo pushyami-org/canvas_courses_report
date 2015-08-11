@@ -56,15 +56,15 @@ public class CanvasCourseReportFilter implements Filter {
 		String propertiesFilePath = System.getProperty(SYSTEM_PROPERTY_FILE_PATH);
 		if (!ReportUtilities.isEmpty(propertiesFilePath)) {
 			appExtPropertiesFile=ReportUtilities.getPropertiesFromURL(propertiesFilePath);
-			if(appExtPropertiesFile!=null) {
-				isTestUrlEnabled = Boolean.parseBoolean(appExtPropertiesFile.getProperty(PROPERTY_USE_TEST_URL,FALSE));
-				providerURL=appExtPropertiesFile.getProperty(PROPERTY_LDAP_SERVER_URL);
-				mcommunityGroup=appExtPropertiesFile.getProperty(PROPERTY_AUTH_GROUP);
-				canvasURL = appExtPropertiesFile.getProperty(PROPERTY_CANVAS_URL);
-				canvasToken = appExtPropertiesFile.getProperty(PROPERTY_CANVAS_ADMIN);
-			}else {
+			if(appExtPropertiesFile==null) {
 				M_log.error("Failed to load application properties from canvasReport.properties");
+				return;
 			}
+			isTestUrlEnabled = Boolean.parseBoolean(appExtPropertiesFile.getProperty(PROPERTY_USE_TEST_URL,FALSE));
+			providerURL=appExtPropertiesFile.getProperty(PROPERTY_LDAP_SERVER_URL);
+			mcommunityGroup=appExtPropertiesFile.getProperty(PROPERTY_AUTH_GROUP);
+			canvasURL = appExtPropertiesFile.getProperty(PROPERTY_CANVAS_URL);
+			canvasToken = appExtPropertiesFile.getProperty(PROPERTY_CANVAS_ADMIN);
 			
 		}else {
 			M_log.error("File path for (canvasReport.properties) is not provided");
