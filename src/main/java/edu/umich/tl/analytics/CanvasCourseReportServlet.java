@@ -8,7 +8,6 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Properties;
 import java.util.ResourceBundle;
 
 import javax.servlet.http.HttpServlet;
@@ -32,51 +31,28 @@ import org.apache.http.util.EntityUtils;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import edu.umich.tl.utils.ReportUtilities;
 
 
 
-public class AnalyticsServlet extends HttpServlet {
+public class CanvasCourseReportServlet extends HttpServlet {
 	
 	private static final String ROOT = "root";
 	private static final long serialVersionUID = 8770051932039446255L;
-	private static Log M_log = LogFactory.getLog(AnalyticsServlet.class);
-	private static final String PROPERTY_CANVAS_ADMIN="canvas.admin.token";
-	private static final String PROPERTY_CANVAS_URL="canvas.url";
+	private static Log M_log = LogFactory.getLog(CanvasCourseReportServlet.class);
+	
 	private static final String ACTION = "action";
 	private static final String TERM = "term";
 	private static final String TERM_NAME = "termName";
 	private static final String ACTION_GET_COURSES = "getCoursesPublished";
 	private static final String ACTION_GET_TERMS = "getEnrollmentTerms";
 	private static final String NONE = "NONE";
-	private static final String SYSTEM_PROPERTY_FILE_PATH = "canvasCourseReportPath";
 	private static final String EMAIL_SUFFIX="@umich.edu";
-	private Properties appExtPropertiesFile;
-	private String canvasToken;
-	private String canvasURL;
+	private String canvasToken=CanvasCourseReportFilter.canvasToken;
+	private String canvasURL=CanvasCourseReportFilter.canvasURL;
 	ResourceBundle props = ResourceBundle.getBundle("coursereport");
 	
 	public void init() {
 		M_log.debug("init(): called");
-		getExternalAppProperties();
-	}
-	
-	private void getExternalAppProperties() {
-		M_log.debug("getExternalAppProperties(): called");
-		String propertiesFilePath = System.getProperty(SYSTEM_PROPERTY_FILE_PATH);
-		if (!ReportUtilities.isEmpty(propertiesFilePath)) {
-			appExtPropertiesFile=ReportUtilities.getPropertiesFromURL(propertiesFilePath);
-			if(appExtPropertiesFile!=null) {
-				canvasToken = appExtPropertiesFile.getProperty(PROPERTY_CANVAS_ADMIN);
-				canvasURL = appExtPropertiesFile.getProperty(PROPERTY_CANVAS_URL);
-			}else {
-				M_log.error("Failed to load application properties from canvasReport.properties");
-			}
-			
-		}else {
-			M_log.error("File path for (canvasReport.properties) is not provided");
-		}
-		
 	}
 	
 
@@ -160,8 +136,8 @@ public class AnalyticsServlet extends HttpServlet {
 	private void getThePublishedCourseList(String url, CoursesForSubaccounts cfs) {
 		M_log.debug("getThePublishedCourseList: Called");
 		HttpResponse httpResponse = doApiCall(url);
-		ObjectMapper mapper = new ObjectMapper();
 		HttpEntity entity = httpResponse.getEntity();
+		ObjectMapper mapper = new ObjectMapper();
 		List<HashMap<String, Object>> courseList=new ArrayList<HashMap<String, Object>>();
 		try {
 			String jsonResponseString = EntityUtils.toString(entity);
