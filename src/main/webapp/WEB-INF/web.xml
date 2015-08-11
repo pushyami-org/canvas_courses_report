@@ -7,7 +7,7 @@
 
   <display-name>canvas_courses_report</display-name>
   
-    <filter>
+        <filter>
 		<filter-name>CanvasCourseReportFilter</filter-name>
 		<filter-class>edu.umich.tl.analytics.CanvasCourseReportFilter</filter-class>
 	</filter>

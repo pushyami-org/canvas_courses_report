@@ -7,6 +7,9 @@ public class CoursesForSubaccounts {
 	public ArrayList<Course> course=new ArrayList<Course>();
 	
 	public ArrayList<SubAccount> subAccount=new ArrayList<SubAccount>();
+	
+	public boolean subaccountCallHasErr=false;
+	public boolean courseCallHasErr=false;
 
 
 	public ArrayList<Course> getCourse() {
@@ -31,6 +34,22 @@ public class CoursesForSubaccounts {
 	
 	public void addSubAccount(SubAccount subAccount){
 		this.subAccount.add(subAccount);
+	}
+
+	public boolean isSubaccountCallHasErr() {
+		return subaccountCallHasErr;
+	}
+
+	public void setSubaccountCallHasErr(boolean subaccountCallHasErr) {
+		this.subaccountCallHasErr = subaccountCallHasErr;
+	}
+
+	public boolean isGetCourseErrFlag() {
+		return courseCallHasErr;
+	}
+
+	public void setCourseCallHasErr(boolean courseCallHasErr) {
+		this.courseCallHasErr = courseCallHasErr;
 	}
 
 }
