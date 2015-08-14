@@ -8,6 +8,7 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.ResourceBundle;
 
 import javax.servlet.http.HttpServlet;
@@ -36,7 +37,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class CanvasCourseReportServlet extends HttpServlet {
 	
-	private static final String ROOT = "root";
 	private static final long serialVersionUID = 8770051932039446255L;
 	private static Log M_log = LogFactory.getLog(CanvasCourseReportServlet.class);
 	
@@ -45,7 +45,6 @@ public class CanvasCourseReportServlet extends HttpServlet {
 	private static final String TERM_NAME = "termName";
 	private static final String ACTION_GET_COURSES = "getCoursesPublished";
 	private static final String ACTION_GET_TERMS = "getEnrollmentTerms";
-	private static final String NONE = "NONE";
 	private static final String EMAIL_SUFFIX="@umich.edu";
 	private String canvasToken=CanvasCourseReportFilter.canvasToken;
 	private String canvasURL=CanvasCourseReportFilter.canvasURL;
@@ -78,22 +77,26 @@ public class CanvasCourseReportServlet extends HttpServlet {
 	private void getPublishedCourses(HttpServletRequest request,HttpServletResponse response) {
 		M_log.debug("getPublishedCourses: Called");
 		String term = request.getParameter(TERM);
-	    String termName = request.getParameter(TERM_NAME);
+		String termName = request.getParameter(TERM_NAME);
 		String subAccountUrl = canvasURL+"/api/v1/accounts/1/sub_accounts?recursive=true&per_page=100";
 		String url = canvasURL+"/api/v1/accounts/1/courses?enrollment_term_id="+term+"&published=true&per_page=100";
 		CoursesForSubaccounts cfs =new CoursesForSubaccounts();
-		getSubAccountInfo(subAccountUrl,cfs);
-		getThePublishedCourseList(url,cfs);
-		response.setContentType("text/csv");
-		response.setHeader("Content-Disposition","attachment;filename=PublishedCanvasCoursesWithInstructorsFor"+termName+".csv");
-		try {
-			OutputStream outputStream = response.getOutputStream();
-			String outputResult = generateCSVFile(cfs).toString();
-			outputStream.write(outputResult.getBytes());
-			outputStream.flush();
-			outputStream.close();
-		} catch (IOException e) {
-			M_log.error("Writing the csv file to the has some errror: ",e);
+		getSubAccountInfo(subAccountUrl,cfs,response);
+		if(!cfs.subaccountCallHasErr) {
+			getThePublishedCourseList(url,cfs,response);
+			if(!cfs.courseCallHasErr) {
+				response.setContentType("text/csv");
+				response.setHeader("Content-Disposition","attachment;filename=PublishedCanvasCoursesWithInstructorsFor"+termName+".csv");
+				try {
+					OutputStream outputStream = response.getOutputStream();
+					String outputResult = generateCSVFile(cfs).toString();
+					outputStream.write(outputResult.getBytes());
+					outputStream.flush();
+					outputStream.close();
+				} catch (IOException e) {
+					M_log.error("Writing the csv file to the has some errror: ",e);
+				}
+			}
 		}
 	}
 
@@ -133,11 +136,27 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		}
 		return httpResponse;
 	}
-	private void getThePublishedCourseList(String url, CoursesForSubaccounts cfs) {
+	private void getThePublishedCourseList(String url, CoursesForSubaccounts cfs,HttpServletResponse response) {
 		M_log.debug("getThePublishedCourseList: Called");
 		HttpResponse httpResponse = doApiCall(url);
-		HttpEntity entity = httpResponse.getEntity();
 		ObjectMapper mapper = new ObjectMapper();
+		int statusCode = httpResponse.getStatusLine().getStatusCode();
+		if(statusCode!=200) {
+			response.setStatus(statusCode);
+			cfs.setCourseCallHasErr(true);
+			PrintWriter out;
+			M_log.error(errorHandler(httpResponse,url));
+			try {
+				out = response.getWriter();
+				out.print(props.getString("report.generation.err.msg"));
+				out.flush();
+			} catch (IOException e) {
+				M_log.error("IOException occured for getThePublishedCourseList(): ",e);
+			}
+			return;
+		}
+		
+		HttpEntity entity = httpResponse.getEntity();
 		List<HashMap<String, Object>> courseList=new ArrayList<HashMap<String, Object>>();
 		try {
 			String jsonResponseString = EntityUtils.toString(entity);
@@ -149,13 +168,13 @@ public class CanvasCourseReportServlet extends HttpServlet {
 				aCourse.setCourseName((String)course.get("name"));
 				aCourse.setCourseId((Integer)course.get("id"));
 				aCourse.setCourseUrl((String)canvasURL+"/courses/"+course.get("id"));
-				HashMap<String, String> instructorsForCourses = getInstructorsForCourses(aCourse.getCourseId());
+				HashMap<String, String> instructorsForCourses = getInstructorsForCourses(aCourse.getCourseId(),response,cfs);
 				aCourse.setInstructors(instructorsForCourses);
 				if(!(aCourse.getAccountId()==1)) {
 					getSubaccountInfoForCourse(cfs, aCourse);
 				}else {
-					aCourse.setAccountName(ROOT);
-					aCourse.setParentAccountName(ROOT);
+					aCourse.setAccountName(props.getString("value.root"));
+					aCourse.setParentAccountName(props.getString("value.root"));
 					aCourse.setParentAccountId(1);
 					M_log.debug("The Course belongs to Root account");
 				}
@@ -163,7 +182,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			}
 			String nextPageLink = getNextPageLink(httpResponse);
 			if(nextPageLink!=null) {
-				getThePublishedCourseList(nextPageLink,cfs);
+				getThePublishedCourseList(nextPageLink,cfs,response);
 			}
 
 		} catch (ParseException e) {
@@ -171,6 +190,29 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		} catch (IOException e) {
 			M_log.error("IOException occured getThePublishedCourseList( )for URL:" +url,e);
 		}
+	}
+
+	//{"errors":[{"message":"The specified resource does not exist."}],"error_report_id":479313}
+
+	private String errorHandler(HttpResponse httpResponse, String url) {
+		ObjectMapper mapper = new ObjectMapper();
+		HttpEntity entity = httpResponse.getEntity();
+		StringBuilder errMsg = new StringBuilder();
+		errMsg.append("Api call ["+url+"] has some errors they are: ");
+		try {
+			String jsonErrRes = EntityUtils.toString(entity);
+			Map<String,Object> map = new HashMap<String,Object>();
+			map = mapper.readValue(jsonErrRes,new TypeReference<HashMap<String,Object>>(){});
+			ArrayList<HashMap<String, String>> error = (ArrayList<HashMap<String, String>>) map.get("errors");
+			for (HashMap<String, String> hashMap : error) {
+				errMsg.append((String)hashMap.get("message")+",");
+			}
+		} catch (ParseException e1) {
+			M_log.error("ParseException occured errorHandler() : ",e1);
+		} catch (IOException e1) {
+			M_log.error("IOException occured errorHandler() : ",e1);
+		}
+		return errMsg.toString();
 	}
 
 	private void getSubaccountInfoForCourse(CoursesForSubaccounts cfs, Course aCourse) {
@@ -187,7 +229,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 
 	private void getParentSubaccountNameForCourse(Course aCourse, ArrayList<SubAccount> subAccounts,SubAccount subAccount) {
 		if(subAccount.isParentRoot()) {
-			aCourse.setParentAccountName(ROOT);
+			aCourse.setParentAccountName(props.getString("value.root"));
 		}else {
 			for (SubAccount sAcct : subAccounts) {
 				if(sAcct.getSubAccountId()==aCourse.getParentAccountId()) {
@@ -199,14 +241,20 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		}
 	}
 
-	private HashMap<String, String> getInstructorsForCourses(int courseId) {
+	private HashMap<String, String> getInstructorsForCourses(int courseId,HttpServletResponse response,CoursesForSubaccounts cfs) {
 		M_log.debug("getInstructorsForCourses: Called");
-		String EnrollmentUrl= canvasURL+"/api/v1/courses/"+courseId+"/enrollments?per_page=100&type=TeacherEnrollment";
-		HttpResponse httpResponse = doApiCall(EnrollmentUrl);
-		ObjectMapper mapper = new ObjectMapper();
-		HttpEntity entity = httpResponse.getEntity();
 		List<HashMap<String, Object>> instructorEnrollmentList=new ArrayList<HashMap<String, Object>>();
 		HashMap<String, String> instructors = new HashMap<String, String>();
+		String EnrollmentUrl= canvasURL+"/api/v1/courses/"+courseId+"/enrollments?per_page=100&type=TeacherEnrollment";
+		HttpResponse httpResponse = doApiCall(EnrollmentUrl);
+		int statusCode = httpResponse.getStatusLine().getStatusCode();
+		if(statusCode!=200) {
+			M_log.error(errorHandler(httpResponse, EnrollmentUrl));
+			instructors.put(props.getString("value.error.info"), props.getString("value.error.info"));
+			return instructors;
+		}
+		ObjectMapper mapper = new ObjectMapper();
+		HttpEntity entity = httpResponse.getEntity();
 		try {
 			String jsonResponseString = EntityUtils.toString(entity);
 			instructorEnrollmentList=mapper.readValue(jsonResponseString,new TypeReference<List<Object>>(){});
@@ -216,7 +264,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 				instructors.put((String)user.get("sis_login_id")+EMAIL_SUFFIX, (String) user.get("name"));
 			}
 			}else {
-				instructors.put(NONE, NONE);
+				instructors.put(props.getString("value.none"), props.getString("value.none"));
 			}
 		} catch (ParseException e) {
 			M_log.error("Parse exception occured getInstructorsForCourses( ) for courseId:"+courseId,e);
@@ -230,10 +278,25 @@ public class CanvasCourseReportServlet extends HttpServlet {
       * The Subaccount call fetches the all the subaccounts that belongs to root, the api call only returns 100 records(that's how much canvas supports)
       * to to fetch more records we need look in the response header for the pagination Link to get more record
       */
-	private void getSubAccountInfo(String url, CoursesForSubaccounts cfs) {
+	private void getSubAccountInfo(String url, CoursesForSubaccounts cfs,HttpServletResponse response) {
 		M_log.debug("getSubAccountInfo: Called");
 		HttpResponse httpResponse = doApiCall(url);
 		ObjectMapper mapper = new ObjectMapper();
+		int statusCode = httpResponse.getStatusLine().getStatusCode();
+		if(statusCode!=200) {
+			response.setStatus(statusCode);
+			cfs.setSubaccountCallHasErr(true);
+			PrintWriter out;
+			M_log.error(errorHandler(httpResponse, url));
+			try {
+				out = response.getWriter();
+				out.print(props.getString("report.generation.err.msg"));
+				out.flush();
+			} catch (IOException e) {
+				M_log.error("IOException occured getSubAccountInfo( ):" +url,e);
+			}
+			return;
+		}
 		HttpEntity entity = httpResponse.getEntity();
 		List<HashMap<String, Object>> subAccounts=new ArrayList<HashMap<String, Object>>();
 		try {
@@ -249,7 +312,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			}
 			String nextPageLink = getNextPageLink(httpResponse);
 			 if(nextPageLink!=null) {
-				 getSubAccountInfo(nextPageLink,cfs);
+				 getSubAccountInfo(nextPageLink,cfs,response);
 			 }
 		} catch (ParseException e) {
 			M_log.error("Parse exception occured getSubAccountInfo( ) for URL:"+url,e);
@@ -264,6 +327,8 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		PrintWriter out = null;
 		String url=canvasURL+"/api/v1/accounts/1/terms?per_page=100";
 		HttpResponse httpResponse = doApiCall(url);
+		int statusCode = httpResponse.getStatusLine().getStatusCode();
+		response.setStatus(statusCode);
 		try {
 			rd=new BufferedReader(new InputStreamReader(httpResponse.getEntity().getContent()));
 			String line = "";
