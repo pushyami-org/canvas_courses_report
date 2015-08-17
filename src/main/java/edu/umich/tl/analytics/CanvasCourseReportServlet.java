@@ -10,6 +10,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ResourceBundle;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentHashMap.KeySetView;
+import java.util.concurrent.TimeUnit;
 
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -21,7 +24,6 @@ import org.apache.http.Header;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
-import org.apache.http.ParseException;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpUriRequest;
@@ -29,14 +31,18 @@ import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
 
+import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+
 
 
 
 
 public class CanvasCourseReportServlet extends HttpServlet {
 	
+	private static final String THREAD_ID = "thrdId";
 	private static final long serialVersionUID = 8770051932039446255L;
 	private static Log M_log = LogFactory.getLog(CanvasCourseReportServlet.class);
 	
@@ -46,9 +52,12 @@ public class CanvasCourseReportServlet extends HttpServlet {
 	private static final String ACTION_GET_COURSES = "getCoursesPublished";
 	private static final String ACTION_GET_TERMS = "getEnrollmentTerms";
 	private static final String EMAIL_SUFFIX="@umich.edu";
+	private static final String ACTION_POLLING = "polling";
+	private static final String WORKING = "working";
 	private String canvasToken=CanvasCourseReportFilter.canvasToken;
 	private String canvasURL=CanvasCourseReportFilter.canvasURL;
 	ResourceBundle props = ResourceBundle.getBundle("coursereport");
+	ConcurrentHashMap<Thread,CourseReportTask> courseReportReqThreads=new ConcurrentHashMap<Thread,CourseReportTask>();
 	
 	public void init() {
 		M_log.debug("init(): called");
@@ -63,6 +72,8 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			getPublishedCourses(request,response);
 		}else if(requestedAction.equals(ACTION_GET_TERMS)) {
 			enrollmentTermsLogic(response);
+		}else if(requestedAction.equals(ACTION_POLLING)) {
+			checkIfACourseReportThreadIsDone(request,response);
 		}else {
 			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
 			try {
@@ -74,31 +85,124 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		}
 		
 	}
-	private void getPublishedCourses(HttpServletRequest request,HttpServletResponse response) {
-		M_log.debug("getPublishedCourses: Called");
-		String term = request.getParameter(TERM);
-		String termName = request.getParameter(TERM_NAME);
-		String subAccountUrl = canvasURL+"/api/v1/accounts/1/sub_accounts?recursive=true&per_page=100";
-		String url = canvasURL+"/api/v1/accounts/1/courses?enrollment_term_id="+term+"&published=true&per_page=100";
-		CoursesForSubaccounts cfs =new CoursesForSubaccounts();
-		getSubAccountInfo(subAccountUrl,cfs,response);
-		if(!cfs.subaccountCallHasErr) {
-			getThePublishedCourseList(url,cfs,response);
-			if(!cfs.courseCallHasErr) {
-				response.setContentType("text/csv");
-				response.setHeader("Content-Disposition","attachment;filename=PublishedCanvasCoursesWithInstructorsFor"+termName+".csv");
-				try {
-					OutputStream outputStream = response.getOutputStream();
-					String outputResult = generateCSVFile(cfs).toString();
-					outputStream.write(outputResult.getBytes());
-					outputStream.flush();
-					outputStream.close();
-				} catch (IOException e) {
-					M_log.error("Writing the csv file to the has some errror: ",e);
+
+	private void checkIfACourseReportThreadIsDone(HttpServletRequest request,HttpServletResponse response) {
+		M_log.debug("Starting polling... number of threads: "+courseReportReqThreads.size());
+		try {
+			boolean isThreadExist=false;
+			String thrdId = request.getParameter(THREAD_ID);
+			long threadId = Long.parseLong(thrdId);
+			KeySetView<Thread, CourseReportTask> courseReportThreads = courseReportReqThreads.keySet();
+			for (Thread aCourseReportThread : courseReportThreads) {
+				if(aCourseReportThread.getId()==threadId) {
+					checkIfThreadAlive(response, aCourseReportThread);
+					isThreadExist=true;
+					break;
 				}
+			}
+			if(!isThreadExist){
+				OutputStream outputStream = response.getOutputStream();
+				response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+				M_log.error("Course report thread is not found: "+thrdId);
+				outputStream.write(props.getString("report.generation.err.msg").getBytes());
+				outputStream.flush();
+				outputStream.close();
+			}
+		} catch (IOException e) {
+			M_log.debug("IOException occoured in checkIfACourseReportThreadIsDone()"+e);
+			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			try {
+				response.getWriter().print(props.getString("report.generation.err.msg"));
+			} catch (IOException e1) {
+				M_log.error("IOException occurred while writing the response out",e1);
 			}
 		}
 	}
+
+
+	private void checkIfThreadAlive(HttpServletResponse response, Thread aCourseReportThread)
+			throws IOException {
+		if(aCourseReportThread.isAlive()) {
+			whileActionThreadIsRunning(response);
+		}else {
+			afterActionThreadIsDone(response, aCourseReportThread);
+		}
+	}
+
+
+	private void whileActionThreadIsRunning(HttpServletResponse response) throws IOException {
+		M_log.debug("Still working on generating the report");
+		OutputStream outputStream = response.getOutputStream();
+		outputStream.write(WORKING.getBytes());
+		outputStream.flush();
+		outputStream.close();
+	}
+
+
+	private void afterActionThreadIsDone(HttpServletResponse response, Thread aCourseReportThread) throws IOException {
+		OutputStream outputStream = response.getOutputStream();
+		CourseReportTask courseReportTask = courseReportReqThreads.get(aCourseReportThread);
+		CoursesForSubaccounts cfs = courseReportTask.getCfs();
+		if (cfs.subaccountCallHasErr || cfs.courseCallHasErr) {
+			courseReportReqThreads.remove(aCourseReportThread);
+			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			M_log.error("An error occurred while getting data, so report couldn't be generated");
+			outputStream.write(props.getString("report.generation.err.msg").getBytes());
+			outputStream.flush();
+			outputStream.close();
+			M_log.debug("Ending polling... number of threads: " + courseReportReqThreads.size());
+		} else {
+			M_log.debug("Generating the report....");
+			response.setContentType("text/csv");
+			response.setHeader("Content-Disposition", "attachment;filename="+String.format(props.getString("filename.course.report"),courseReportTask.getTermName()));
+			String outputResult = generateCSVFile(cfs).toString();
+			courseReportReqThreads.remove(aCourseReportThread);
+			outputStream.write(outputResult.getBytes());
+			outputStream.flush();
+			outputStream.close();
+			M_log.debug("Ending polling... number of threads: " + courseReportReqThreads.size());
+		}
+	}
+	private void getPublishedCourses(HttpServletRequest request,HttpServletResponse response) {
+		M_log.debug("getPublishedCourses(): Called");
+		String term = request.getParameter(TERM);
+		String termName = request.getParameter(TERM_NAME);
+		M_log.info("Course Report request For Term= " +termName);
+		CoursesForSubaccounts cfs =new CoursesForSubaccounts();
+		CourseReportTask courseReportTask=new CourseReportTask(term, termName,cfs,this);
+		Thread courseReportThread=new Thread(courseReportTask);
+		courseReportReqThreads.put(courseReportThread, courseReportTask);
+		courseReportThread.start();
+		PrintWriter out;
+		try {
+			out = response.getWriter();
+			out.print(courseReportThread.getId());
+			out.flush();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	public CoursesForSubaccounts getPublishedCourseThreadCall(String term, String termName,CoursesForSubaccounts cfs) {
+		String subAccountUrl = canvasURL + "/api/v1/accounts/1/sub_accounts?recursive=true&per_page=100";
+		String url = canvasURL + "/api/v1/accounts/1/courses?enrollment_term_id=" + term+ "&published=true&per_page=100";
+
+		long startTime = System.currentTimeMillis();
+		getSubAccountInfo(subAccountUrl, cfs);
+		long stopTime = System.currentTimeMillis();
+		long elapsedTime = stopTime - startTime;
+		M_log.info(String.format("Api call to get all (SubAccounts) info took %ssec",TimeUnit.MILLISECONDS.toSeconds(elapsedTime)));
+
+		if (!cfs.isSubaccountCallHasErr()) {
+			startTime = System.currentTimeMillis();
+			getThePublishedCourseList(url, cfs);
+			stopTime = System.currentTimeMillis();
+			elapsedTime = stopTime - startTime;
+			M_log.info(String.format("Api call to get all (published Courses) for %s term took %ssec", termName, TimeUnit.MILLISECONDS.toSeconds(elapsedTime)));
+		}
+		return cfs;
+	}
+	
 
 	private StringBuilder generateCSVFile(CoursesForSubaccounts cfs) {
 		M_log.debug("generateCSVFile: Called");
@@ -112,7 +216,6 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		
 	}
 	
-
 	private HttpResponse doApiCall(String url) {
 		HttpUriRequest clientRequest = null;
 		HttpResponse httpResponse=null;
@@ -136,23 +239,14 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		}
 		return httpResponse;
 	}
-	private void getThePublishedCourseList(String url, CoursesForSubaccounts cfs,HttpServletResponse response) {
+	private void getThePublishedCourseList(String url, CoursesForSubaccounts cfs) {
 		M_log.debug("getThePublishedCourseList: Called");
 		HttpResponse httpResponse = doApiCall(url);
 		ObjectMapper mapper = new ObjectMapper();
 		int statusCode = httpResponse.getStatusLine().getStatusCode();
 		if(statusCode!=200) {
-			response.setStatus(statusCode);
 			cfs.setCourseCallHasErr(true);
-			PrintWriter out;
-			M_log.error(errorHandler(httpResponse,url));
-			try {
-				out = response.getWriter();
-				out.print(props.getString("report.generation.err.msg"));
-				out.flush();
-			} catch (IOException e) {
-				M_log.error("IOException occured for getThePublishedCourseList(): ",e);
-			}
+			M_log.error(apiCallErrorHandler(httpResponse,url));
 			return;
 		}
 		
@@ -168,7 +262,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 				aCourse.setCourseName((String)course.get("name"));
 				aCourse.setCourseId((Integer)course.get("id"));
 				aCourse.setCourseUrl((String)canvasURL+"/courses/"+course.get("id"));
-				HashMap<String, String> instructorsForCourses = getInstructorsForCourses(aCourse.getCourseId(),response,cfs);
+				HashMap<String, String> instructorsForCourses = getInstructorsForCourses(aCourse.getCourseId(),cfs);
 				aCourse.setInstructors(instructorsForCourses);
 				if(!(aCourse.getAccountId()==1)) {
 					getSubaccountInfoForCourse(cfs, aCourse);
@@ -182,19 +276,22 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			}
 			String nextPageLink = getNextPageLink(httpResponse);
 			if(nextPageLink!=null) {
-				getThePublishedCourseList(nextPageLink,cfs,response);
+				getThePublishedCourseList(nextPageLink,cfs);
 			}
 
-		} catch (ParseException e) {
-			M_log.error("Parse exception occured getThePublishedCourseList( ) for URL:"+url,e);
-		} catch (IOException e) {
+		} catch (JsonParseException e1) {
+			M_log.error("JsonParseException occured getThePublishedCourseList() : ",e1);
+		} catch(JsonMappingException e1) {
+			M_log.error("JsonMappingException occured getThePublishedCourseList() : ",e1);
+		}  catch (IOException e) {
 			M_log.error("IOException occured getThePublishedCourseList( )for URL:" +url,e);
 		}
 	}
+	
 
 	//{"errors":[{"message":"The specified resource does not exist."}],"error_report_id":479313}
 
-	private String errorHandler(HttpResponse httpResponse, String url) {
+	private String apiCallErrorHandler(HttpResponse httpResponse, String url) {
 		ObjectMapper mapper = new ObjectMapper();
 		HttpEntity entity = httpResponse.getEntity();
 		StringBuilder errMsg = new StringBuilder();
@@ -207,8 +304,10 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			for (HashMap<String, String> hashMap : error) {
 				errMsg.append((String)hashMap.get("message")+",");
 			}
-		} catch (ParseException e1) {
-			M_log.error("ParseException occured errorHandler() : ",e1);
+		} catch (JsonParseException e1) {
+			M_log.error("JsonParseException occured errorHandler() : ",e1);
+		} catch(JsonMappingException e1) {
+			M_log.error("JsonMappingException occured errorHandler() : ",e1);
 		} catch (IOException e1) {
 			M_log.error("IOException occured errorHandler() : ",e1);
 		}
@@ -241,7 +340,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		}
 	}
 
-	private HashMap<String, String> getInstructorsForCourses(int courseId,HttpServletResponse response,CoursesForSubaccounts cfs) {
+	private HashMap<String, String> getInstructorsForCourses(int courseId,CoursesForSubaccounts cfs) {
 		M_log.debug("getInstructorsForCourses: Called");
 		List<HashMap<String, Object>> instructorEnrollmentList=new ArrayList<HashMap<String, Object>>();
 		HashMap<String, String> instructors = new HashMap<String, String>();
@@ -249,7 +348,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		HttpResponse httpResponse = doApiCall(EnrollmentUrl);
 		int statusCode = httpResponse.getStatusLine().getStatusCode();
 		if(statusCode!=200) {
-			M_log.error(errorHandler(httpResponse, EnrollmentUrl));
+			M_log.error(apiCallErrorHandler(httpResponse, EnrollmentUrl));
 			instructors.put(props.getString("value.error.info"), props.getString("value.error.info"));
 			return instructors;
 		}
@@ -266,10 +365,12 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			}else {
 				instructors.put(props.getString("value.none"), props.getString("value.none"));
 			}
-		} catch (ParseException e) {
-			M_log.error("Parse exception occured getInstructorsForCourses( ) for courseId:"+courseId,e);
+		} catch (JsonParseException e1) {
+			M_log.error("JsonParseException occurred getInstructorsForCourses() for courseId : "+courseId,e1);
+		} catch(JsonMappingException e1) {
+			M_log.error("JsonMappingException occurred getInstructorsForCourses() for courseId : "+courseId,e1);
 		} catch (IOException e) {
-			M_log.error("IOException occured getInstructorsForCourses( )for courseId:" +courseId,e);
+			M_log.error("IOException occurred getInstructorsForCourses( ) for courseId:" +courseId,e);
 		}
 		return instructors;
 		
@@ -278,23 +379,14 @@ public class CanvasCourseReportServlet extends HttpServlet {
       * The Subaccount call fetches the all the subaccounts that belongs to root, the api call only returns 100 records(that's how much canvas supports)
       * to to fetch more records we need look in the response header for the pagination Link to get more record
       */
-	private void getSubAccountInfo(String url, CoursesForSubaccounts cfs,HttpServletResponse response) {
+	private void getSubAccountInfo(String url, CoursesForSubaccounts cfs) {
 		M_log.debug("getSubAccountInfo: Called");
 		HttpResponse httpResponse = doApiCall(url);
 		ObjectMapper mapper = new ObjectMapper();
 		int statusCode = httpResponse.getStatusLine().getStatusCode();
 		if(statusCode!=200) {
-			response.setStatus(statusCode);
 			cfs.setSubaccountCallHasErr(true);
-			PrintWriter out;
-			M_log.error(errorHandler(httpResponse, url));
-			try {
-				out = response.getWriter();
-				out.print(props.getString("report.generation.err.msg"));
-				out.flush();
-			} catch (IOException e) {
-				M_log.error("IOException occured getSubAccountInfo( ):" +url,e);
-			}
+			M_log.error(apiCallErrorHandler(httpResponse, url));
 			return;
 		}
 		HttpEntity entity = httpResponse.getEntity();
@@ -312,35 +404,48 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			}
 			String nextPageLink = getNextPageLink(httpResponse);
 			 if(nextPageLink!=null) {
-				 getSubAccountInfo(nextPageLink,cfs,response);
+				 getSubAccountInfo(nextPageLink,cfs);
 			 }
-		} catch (ParseException e) {
-			M_log.error("Parse exception occured getSubAccountInfo( ) for URL:"+url,e);
+		} catch (JsonParseException e1) {
+			M_log.error("JsonParseException occured getSubAccountInfo() for URL: : "+url,e1);
+		} catch(JsonMappingException e1) {
+			M_log.error("JsonMappingException occured getSubAccountInfo() for URL: : "+url,e1);
 		} catch (IOException e) {
 			M_log.error("IOException occured getSubAccountInfo( )for URL:" +url,e);
 		}
 
 	}
+	
 
 	private void enrollmentTermsLogic(HttpServletResponse response)  {
 		BufferedReader rd = null;
 		PrintWriter out = null;
-		String url=canvasURL+"/api/v1/accounts/1/terms?per_page=100";
-		HttpResponse httpResponse = doApiCall(url);
-		int statusCode = httpResponse.getStatusLine().getStatusCode();
-		response.setStatus(statusCode);
 		try {
+			out = response.getWriter();
+			String url=canvasURL+"/api/v1/accounts/1/terms?per_page=100";
+			HttpResponse httpResponse = doApiCall(url);
+			int statusCode = httpResponse.getStatusLine().getStatusCode();
+			response.setStatus(statusCode);
+			if(statusCode!=200) {
+				out.print(props.getString("terms.err.msg"));
+				M_log.error(apiCallErrorHandler(httpResponse, url));
+				out.flush();
+				return;
+			}
+			long startTime = System.nanoTime();
 			rd=new BufferedReader(new InputStreamReader(httpResponse.getEntity().getContent()));
+			long stopTime = System.nanoTime();
+			long elapsedTime = stopTime - startTime;
+			M_log.info(String.format("Api call to get[Enrollment terms] took %snano sec",elapsedTime));
 			String line = "";
 			StringBuilder sb = new StringBuilder();
 			while ((line = rd.readLine()) != null) {
 				sb.append(line);
 			}
-			out = response.getWriter();
 			out.print(sb.toString());
 			out.flush();
 		} catch (IllegalStateException e) {
-			M_log.error("Parse exception occured enrollmentTermsLogic( ) ",e);
+			M_log.error("IllegalState Exception occured enrollmentTermsLogic( ) ",e);
 		} catch (IOException e) {
 			M_log.error("IOException occured enrollmentTermsLogic( ) ",e);
 		}

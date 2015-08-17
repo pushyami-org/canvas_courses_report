@@ -7,6 +7,7 @@ String canvasURL=(String)request.getAttribute("canvasURL");
 <meta charset="utf-8">
 <title>Course Report Tool</title>
 <link rel="stylesheet" href="assets/vendor/bootstrap/bootstrap.min.css">
+<link href="assets/css/report.css" rel="stylesheet">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-control" content="no-cache">
 <meta http-equiv="X-UA-Compatible" content="IE=9">
@@ -22,12 +23,14 @@ String canvasURL=(String)request.getAttribute("canvasURL");
 </div>
 <div class="panel panel-default">
 <div class="panel-body">
+<label for="termsSelect"></label>
   <select id="termsSelect">
-  <label for="termsSelect"></label>
   </select>
+  <div class="spinner" style="display:none"></div>
 </div>
 </div>
 <div id="sessExpire" class="well well-sm" style="display:none">Session Expired, Please reload the page</div>
+<div id="errRes" class="well well-sm" style="display:none"></div>
 </div>
  
 </body>
