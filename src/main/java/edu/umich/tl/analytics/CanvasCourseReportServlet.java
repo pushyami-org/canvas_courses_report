@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.ResourceBundle;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentHashMap.KeySetView;
+import java.util.concurrent.TimeUnit;
 
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
@@ -86,17 +87,26 @@ public class CanvasCourseReportServlet extends HttpServlet {
 	}
 
 	private void checkIfACourseReportThreadIsDone(HttpServletRequest request,HttpServletResponse response) {
-		M_log.debug("Starting polling... Thread size: "+courseReportReqThreads.size());
+		M_log.debug("Starting polling... number of threads: "+courseReportReqThreads.size());
 		try {
+			boolean isThreadExist=false;
 			String thrdId = request.getParameter(THREAD_ID);
 			long threadId = Long.parseLong(thrdId);
-			KeySetView<Thread, CourseReportTask> keySet = courseReportReqThreads.keySet();
-			for (Thread aCourseReportThread : keySet) {
+			KeySetView<Thread, CourseReportTask> courseReportThreads = courseReportReqThreads.keySet();
+			for (Thread aCourseReportThread : courseReportThreads) {
 				if(aCourseReportThread.getId()==threadId) {
 					checkIfThreadAlive(response, aCourseReportThread);
+					isThreadExist=true;
 					break;
 				}
-
+			}
+			if(!isThreadExist){
+				OutputStream outputStream = response.getOutputStream();
+				response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+				M_log.error("Course report thread is not found: "+thrdId);
+				outputStream.write(props.getString("report.generation.err.msg").getBytes());
+				outputStream.flush();
+				outputStream.close();
 			}
 		} catch (IOException e) {
 			M_log.debug("IOException occoured in checkIfACourseReportThreadIsDone()"+e);
@@ -112,44 +122,54 @@ public class CanvasCourseReportServlet extends HttpServlet {
 
 	private void checkIfThreadAlive(HttpServletResponse response, Thread aCourseReportThread)
 			throws IOException {
-		OutputStream outputStream = response.getOutputStream();
 		if(aCourseReportThread.isAlive()) {
-			outputStream.write(WORKING.getBytes());
-			outputStream.flush();
-			outputStream.close();
+			whileActionThreadIsRunning(response);
 		}else {
-			afterActionThreadIsDone(response, aCourseReportThread, outputStream);
+			afterActionThreadIsDone(response, aCourseReportThread);
 		}
 	}
 
 
-	private void afterActionThreadIsDone(HttpServletResponse response, Thread aCourseReportThread,
-			OutputStream outputStream)
-					throws IOException {
+	private void whileActionThreadIsRunning(HttpServletResponse response) throws IOException {
+		M_log.debug("Still working on generating the report");
+		OutputStream outputStream = response.getOutputStream();
+		outputStream.write(WORKING.getBytes());
+		outputStream.flush();
+		outputStream.close();
+	}
+
+
+	private void afterActionThreadIsDone(HttpServletResponse response, Thread aCourseReportThread) throws IOException {
+		OutputStream outputStream = response.getOutputStream();
 		CourseReportTask courseReportTask = courseReportReqThreads.get(aCourseReportThread);
-		CoursesForSubaccounts cfs = courseReportTask.cfs;
-		if(cfs.subaccountCallHasErr || cfs.courseCallHasErr ) {
+		CoursesForSubaccounts cfs = courseReportTask.getCfs();
+		if (cfs.subaccountCallHasErr || cfs.courseCallHasErr) {
 			courseReportReqThreads.remove(aCourseReportThread);
 			response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+			M_log.error("An error occurred while getting data, so report couldn't be generated");
 			outputStream.write(props.getString("report.generation.err.msg").getBytes());
-			M_log.debug("Ending polling... Thread size: "+courseReportReqThreads.size());
-		}else {
+			outputStream.flush();
+			outputStream.close();
+			M_log.debug("Ending polling... number of threads: " + courseReportReqThreads.size());
+		} else {
+			M_log.debug("Generating the report....");
 			response.setContentType("text/csv");
-			response.setHeader("Content-Disposition","attachment;filename=PublishedCanvasCoursesWithInstructorsFor"+courseReportTask.termName+".csv");
+			response.setHeader("Content-Disposition", "attachment;filename="+String.format(props.getString("filename.course.report"),courseReportTask.getTermName()));
 			String outputResult = generateCSVFile(cfs).toString();
 			courseReportReqThreads.remove(aCourseReportThread);
 			outputStream.write(outputResult.getBytes());
 			outputStream.flush();
 			outputStream.close();
-			M_log.debug("Ending polling... Thread size: "+courseReportReqThreads.size());
+			M_log.debug("Ending polling... number of threads: " + courseReportReqThreads.size());
 		}
 	}
 	private void getPublishedCourses(HttpServletRequest request,HttpServletResponse response) {
 		M_log.debug("getPublishedCourses(): Called");
 		String term = request.getParameter(TERM);
 		String termName = request.getParameter(TERM_NAME);
+		M_log.info("Course Report request For Term= " +termName);
 		CoursesForSubaccounts cfs =new CoursesForSubaccounts();
-		CourseReportTask courseReportTask=new CourseReportTask(term, termName,cfs);
+		CourseReportTask courseReportTask=new CourseReportTask(term, termName,cfs,this);
 		Thread courseReportThread=new Thread(courseReportTask);
 		courseReportReqThreads.put(courseReportThread, courseReportTask);
 		courseReportThread.start();
@@ -163,38 +183,23 @@ public class CanvasCourseReportServlet extends HttpServlet {
 		}
 	}
 
-	public class CourseReportTask implements Runnable{
-		private String term;
-		private String termName;
-		private CoursesForSubaccounts cfs;
-		
+	public CoursesForSubaccounts getPublishedCourseThreadCall(String term, String termName,CoursesForSubaccounts cfs) {
+		String subAccountUrl = canvasURL + "/api/v1/accounts/1/sub_accounts?recursive=true&per_page=100";
+		String url = canvasURL + "/api/v1/accounts/1/courses?enrollment_term_id=" + term+ "&published=true&per_page=100";
 
-		public CourseReportTask(String term, String termName,CoursesForSubaccounts cfs) {
-			this.term=term;
-			this.termName=termName;
-			this.cfs=cfs;
-		}
-		
-		public CoursesForSubaccounts getCfs() {
-			return cfs;
-		}
+		long startTime = System.currentTimeMillis();
+		getSubAccountInfo(subAccountUrl, cfs);
+		long stopTime = System.currentTimeMillis();
+		long elapsedTime = stopTime - startTime;
+		M_log.info(String.format("Api call to get all (SubAccounts) info took %ssec",TimeUnit.MILLISECONDS.toSeconds(elapsedTime)));
 
-		public void setCfs(CoursesForSubaccounts cfs) {
-			this.cfs = cfs;
+		if (!cfs.isSubaccountCallHasErr()) {
+			startTime = System.currentTimeMillis();
+			getThePublishedCourseList(url, cfs);
+			stopTime = System.currentTimeMillis();
+			elapsedTime = stopTime - startTime;
+			M_log.info(String.format("Api call to get all (published Courses) for %s term took %ssec", termName, TimeUnit.MILLISECONDS.toSeconds(elapsedTime)));
 		}
-
-		public void run() {
-			getPublishedCourseThreadCall(term, termName,cfs);
-		}
-		
-	}
-	private CoursesForSubaccounts getPublishedCourseThreadCall(String term, String termName,CoursesForSubaccounts cfs) {
-		String subAccountUrl = canvasURL+"/api/v1/accounts/1/sub_accounts?recursive=true&per_page=100";
-		String url = canvasURL+"/api/v1/accounts/1/courses?enrollment_term_id="+term+"&published=true&per_page=100";
-		getSubAccountInfo(subAccountUrl,cfs);
-          if(!cfs.isSubaccountCallHasErr()) {
-        	  getThePublishedCourseList(url,cfs);
-          }
 		return cfs;
 	}
 	
@@ -427,7 +432,11 @@ public class CanvasCourseReportServlet extends HttpServlet {
 				out.flush();
 				return;
 			}
+			long startTime = System.nanoTime();
 			rd=new BufferedReader(new InputStreamReader(httpResponse.getEntity().getContent()));
+			long stopTime = System.nanoTime();
+			long elapsedTime = stopTime - startTime;
+			M_log.info(String.format("Api call to get[Enrollment terms] took %snano sec",elapsedTime));
 			String line = "";
 			StringBuilder sb = new StringBuilder();
 			while ((line = rd.readLine()) != null) {

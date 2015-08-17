@@ -3,7 +3,7 @@
   /* global $, Blob, document, window*/
 
   $(document).ready(function() {
-      var reportPollInterv = 10000; //poll every 10 sec
+      var reportPollIntervalMillis = 10000; //poll every 10 sec
       getTermsInfo();
 
       function getTermsInfo() {
@@ -22,7 +22,7 @@
               });
               newSelect.innerHTML = selectHTML;
               $('#termsSelect').on('change', function() {
-              	 $('.spinner').show();
+                  $('.spinner').show();
                   var courseReportRequest = $.ajax({
                       url: 'report?action=getCoursesPublished&term=' + $(this).val() + '&termName=' + $('#termsSelect option:selected').text(),
                       type: 'GET',
@@ -30,10 +30,10 @@
                   courseReportRequest.done(function(response, status, xhr) {
                       var reportIntervId = setInterval(function() {
                           reportTimer(response);
-                      }, reportPollInterv);
+                      }, reportPollIntervalMillis);
 
                       function reportTimer(response) {
-                      	 $('.spinner').show();
+                          $('.spinner').show();
                           var resultsMsg = $.ajax({
                               url: 'report?action=polling&thrdId=' + response,
                               type: 'get',
@@ -57,7 +57,7 @@
                   });
 
                   courseReportRequest.fail(function(xhr) {
-                  	$('.spinner').hide();
+                      $('.spinner').hide();
                       if (xhr.status === 403) {
                           $('#sessExpire').show();
                           $('#sessExpire').fadeIn().delay(10000).fadeOut();
