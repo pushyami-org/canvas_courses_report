@@ -10,8 +10,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ResourceBundle;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentHashMap.KeySetView;
 import java.util.concurrent.TimeUnit;
 
 import javax.servlet.http.HttpServlet;
@@ -92,7 +92,7 @@ public class CanvasCourseReportServlet extends HttpServlet {
 			boolean isThreadExist=false;
 			String thrdId = request.getParameter(THREAD_ID);
 			long threadId = Long.parseLong(thrdId);
-			KeySetView<Thread, CourseReportTask> courseReportThreads = courseReportReqThreads.keySet();
+			Set<Thread> courseReportThreads = courseReportReqThreads.keySet();
 			for (Thread aCourseReportThread : courseReportThreads) {
 				if(aCourseReportThread.getId()==threadId) {
 					checkIfThreadAlive(response, aCourseReportThread);
