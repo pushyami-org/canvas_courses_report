@@ -13,14 +13,32 @@ String canvasURL=(String)request.getAttribute("canvasURL");
 <meta http-equiv="X-UA-Compatible" content="IE=9">
 <script src="assets/vendor/jquery/jquery-1.11.0.min.js" type="text/javascript"></script>
 <script src="assets/js/analytics.js" type="text/javascript"></script>
+<script type="text/javascript">
+$('document').ready(function() {
+	$buildInfo=$('#buildInfo');
+	
+	displayContentOrError = function(response, status, xhr) {
+		if (status == 'error') {
+			var errorMessage = 'Unable to display due to error. ('
+					+ xhr.status + ' ' + xhr.statusText + ')';
+			$buildInfo.html(errorMessage);
+		}
+
+		$buildInfo.show();
+	}
+	$buildInfo.load('build.txt',displayContentOrError);
+		});
+</script>
 </head>
 <body>
 <div class="container">
 <p></p>
+
 <div class="well well-sm">
 <h1>Course Report Tool </h1>
 <span id="serverURL" class="alert"><%=canvasURL%></span>
 </div>
+
 <div class="panel panel-default">
 <div class="panel-body">
 <label for="termsSelect"></label>
@@ -29,8 +47,13 @@ String canvasURL=(String)request.getAttribute("canvasURL");
   <div class="spinner" style="display:none"></div>
 </div>
 </div>
+
 <div id="sessExpire" class="well well-sm" style="display:none">Session Expired, Please reload the page</div>
 <div id="errRes" class="well well-sm" style="display:none"></div>
+
+<div class ="space"></div>
+<div id="footer"> <div id="versionDiv">Build Version:<span id="buildInfo"></span></div></div>
+
 </div>
  
 </body>
