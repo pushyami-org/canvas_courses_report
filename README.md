@@ -66,11 +66,3 @@ ldap is used for authorizing the user and he needs to be part of particular Mcom
 1. Currently in application each request for generating a course report is placed on separate thread and all the list of threads created likewise are placed in memory(java MAP object). The application is  deployed to tlsupportqa/tlsupport application servers and all request are directed only to one webserver( e.g., tomcat). Using a map in memory will work fine as all the requests go back to the same web server. if we ever have multiple webservers, 
    1.  one solution is to make the Load balancer session "sticky" so that the request always goes back to same server. 
    1.  Based on the usage we make have to revisit this issue to have better solution to store the list of the Threads in Database or Session.
-
-
-
-
-
-
- 
-
