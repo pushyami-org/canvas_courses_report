@@ -32,4 +32,4 @@ EXPOSE 5010
 ENV JPDA_ADDRESS="5010"
 ENV JPDA_TRANSPORT="dt_socket"
 
-CMD cp /usr/share/ccr/log4j.properties /usr/local/tomcat/conf/log4j.properties; cp /usr/share/ccr/canvasReport.properties /usr/local/tomcat/conf/canvasreport.properties; catalina.sh jpda run
+CMD cp /usr/share/ccr/log4j.properties /usr/local/tomcat/conf/log4j.properties; cp /usr/share/ccr/canvasreport.properties /usr/local/tomcat/conf/canvasreport.properties; catalina.sh jpda run
