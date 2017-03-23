@@ -23,7 +23,7 @@ ENV JAVA_OPTS="-server \
 -Djava.awt.headless=true -Dcom.sun.management.jmxremote \
 -Dsun.lang.ClassLoader.allowArraySyntax=true \
 -Dfile.encoding=UTF-8 \
--DcanvasCourseReportPath=file:$CATALINA_HOME/conf/canvasReport.properties \
+-DcanvasCourseReportPath=file:$CATALINA_HOME/conf/canvasreport.properties \
 -Dlog4j.configuration=file:/usr/local/tomcat/conf/log4j.properties \
 "
 EXPOSE 8080
